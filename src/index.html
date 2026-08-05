@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com" />
+  <title>DeployKit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="red">
+
+  <div class="titlebar">
+    <div class="titlebar-drag">
+      <span class="status-dot"></span>
+      <span class="brand">DEPLOY <b>//</b> KIT</span>
+    </div>
+    <!-- Los botones de minimizar/maximizar/cerrar los dibuja Windows nativamente
+         (ver titleBarOverlay en main.js) en el espacio reservado a la derecha. -->
+  </div>
+
+  <div class="app">
+
+    <nav class="sidenav" id="sidenav">
+      <button class="hamburger-btn" id="hamburger" title="Expandir/colapsar menú">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="nav-items">
+        <button class="nav-item active" data-page="programas">
+          <span class="nav-icon">&#9635;</span><span class="nav-label">Programas</span>
+        </button>
+        <button class="nav-item" data-page="utiles">
+          <span class="nav-icon">&#9672;</span><span class="nav-label">&Uacute;tiles</span>
+        </button>
+        <button class="nav-item" data-page="config">
+          <span class="nav-icon">&#9881;</span><span class="nav-label">Configuraciones</span>
+        </button>
+      </div>
+    </nav>
+
+    <div class="content">
+
+      <section class="page active" data-page="programas">
+        <div class="programas-layout">
+          <aside class="sub-sidebar">
+            <div class="eyebrow">Categor&iacute;as</div>
+            <nav id="category-nav" class="category-nav"></nav>
+          </aside>
+
+          <div class="programas-main">
+            <div class="toolbar">
+              <div class="method-select" id="method-select">
+                <button class="method-btn active" data-method="auto">AUTO</button>
+                <button class="method-btn" data-method="winget">WINGET</button>
+                <button class="method-btn" data-method="choco">CHOCO</button>
+                <button class="method-btn" data-method="ninite">NINITE</button>
+              </div>
+              <div class="method-select" id="mode-select">
+                <button class="method-btn" data-mode="download">SOLO DESCARGAR</button>
+                <button class="method-btn" data-mode="manual">MANUAL</button>
+                <button class="method-btn active" data-mode="auto">AUTOM&Aacute;TICO</button>
+              </div>
+              <span class="mode-warning" id="choco-mode-warning" title="Chocolatey (edici&oacute;n gratuita) siempre descarga e instala en un solo paso silencioso: no separa &quot;descargar&quot; de &quot;instalar&quot; ni muestra el instalador real. Por eso con CHOCO solo est&aacute; disponible AUTOM&Aacute;TICO.">
+                &#9888; CHOCO no separa descargar/instalar &mdash; solo AUTOM&Aacute;TICO
+              </span>
+              <input id="search" class="search" type="text" placeholder="Buscar programa..." />
+              <button id="btn-install-selected" class="btn-accent" disabled>
+                Instalar seleccionados (<span id="selected-count">0</span>)
+              </button>
+            </div>
+            <div id="grid" class="grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="utiles">
+        <div class="page-scroll">
+          <div class="page-header">
+            <h2>&Uacute;tiles</h2>
+            <p>Runtimes y piezas de entorno de desarrollo — no son apps de uso diario, pero la mayor&iacute;a de los proyectos dependen de tenerlas.</p>
+          </div>
+
+          <div id="tools-grid" class="tools-grid"></div>
+
+          <div class="informativas">
+            <div class="eyebrow">Informativas</div>
+            <div class="info-card">
+              <pre id="roadmap-text"></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" data-page="config">
+        <div class="page-scroll">
+          <div class="page-header">
+            <h2>Configuraciones</h2>
+          </div>
+
+          <div class="config-section">
+            <div class="eyebrow">Personalizaci&oacute;n</div>
+            <p class="config-hint">Carpeta donde se guardan los instaladores cuando us&aacute;s el modo "Solo descargar" en Programas. Se guarda una sola vez y persiste aunque actualices la app.</p>
+            <div class="path-row">
+              <input type="text" id="download-dir-input" class="search" placeholder="Cargando..." />
+              <button class="btn-ghost" id="btn-browse-dir">Elegir carpeta...</button>
+              <button class="btn-accent small" id="btn-save-dir">Guardar</button>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <div class="eyebrow">Tema visual</div>
+            <div class="theme-grid" id="theme-grid">
+              <button class="theme-card" data-theme="red">
+                <span class="theme-preview theme-preview--red"></span>
+                <span class="theme-name">Stealth Red</span>
+                <span class="theme-desc">Negro / rojo t&aacute;ctico</span>
+              </button>
+              <button class="theme-card" data-theme="blue">
+                <span class="theme-preview theme-preview--blue"></span>
+                <span class="theme-name">Cryo Blue</span>
+                <span class="theme-desc">Negro azulado / cian</span>
+              </button>
+              <button class="theme-card" data-theme="purple">
+                <span class="theme-preview theme-preview--purple"></span>
+                <span class="theme-name">Wraith Purple</span>
+                <span class="theme-desc">Negro violaceo / magenta</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <div class="eyebrow">Perfil de selecci&oacute;n (Programas)</div>
+            <p class="config-hint">Guard&aacute; o carg&aacute; qu&eacute; programas y m&eacute;todo ten&iacute;as tildados en la p&aacute;gina Programas.</p>
+            <div class="profile-actions">
+              <button class="btn-ghost" id="btn-export-profile">Exportar selecci&oacute;n</button>
+              <button class="btn-ghost" id="btn-import-profile">Importar selecci&oacute;n</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="terminal" id="terminal">
+    <div class="terminal-header" id="terminal-toggle">
+      <span class="eyebrow">Registro del sistema</span>
+      <div class="terminal-actions">
+        <button class="btn-ghost small" id="btn-clear-log" title="Limpiar el registro">Limpiar</button>
+        <span class="terminal-caret">&#9662;</span>
+      </div>
+    </div>
+    <div class="terminal-body" id="terminal-body"></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
