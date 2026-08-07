@@ -25,11 +25,14 @@ contextBridge.exposeInMainWorld('deploykit', {
   onInstallStream: (cb) => ipcRenderer.on('install:stream', (_e, payload) => cb(payload)),
 
   // Útiles (runtimes / herramientas) — se identifican por tool.id
-  toolStatus: (toolId) => ipcRenderer.invoke('tool:status', toolId),
-  toolInstall: (toolId) => ipcRenderer.invoke('tool:install', toolId),
-  toolUpdate: (toolId) => ipcRenderer.invoke('tool:update', toolId),
+  toolStatus: (toolId, method) => ipcRenderer.invoke('tool:status', toolId, method),
+  toolInstall: (toolId, method) => ipcRenderer.invoke('tool:install', toolId, method),
+  toolUpdate: (toolId, method) => ipcRenderer.invoke('tool:update', toolId, method),
   onToolStream: (cb) => ipcRenderer.on('tool:stream', (_e, payload) => cb(payload)),
 
   // Ventana (los botones min/max/cerrar son nativos vía titleBarOverlay)
   setTitlebarTheme: (theme) => ipcRenderer.send('window:set-titlebar-theme', theme),
+
+  // Logs en disco (persisten entre sesiones, accesibles fuera de la app)
+  openLogsFolder: () => ipcRenderer.invoke('logs:open-folder'),
 });

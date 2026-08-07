@@ -7,6 +7,26 @@ const { TOOLS } = require('./src/tools');
 
 let mainWindow;
 const SETTINGS_PATH = path.join(app.getPath('userData'), 'settings.json');
+const LOGS_DIR = path.join(app.getPath('userData'), 'logs');
+
+function todayLogPath() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const name = `deploykit-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}.log`;
+  return path.join(LOGS_DIR, name);
+}
+
+// Escribe una línea al archivo de log del día (con hora). No debe nunca
+// tirar la app abajo si falla — el log en pantalla sigue funcionando igual.
+function appendLogFile(line) {
+  try {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
+    const ts = new Date().toLocaleTimeString('es-AR', { hour12: false });
+    fs.appendFileSync(todayLogPath(), `[${ts}] ${line}\n`, 'utf-8');
+  } catch (err) {
+    console.error('No se pudo escribir el log en disco:', err);
+  }
+}
 
 // Colores del overlay de controles nativos (min/max/cerrar) por tema.
 // Deben reflejar --bg-void y --text-hi de cada tema en styles.css.
@@ -141,9 +161,13 @@ ipcMain.handle('profile:import', async (event) => {
   }
 });
 
-// ---------- Helper: correr un comando y transmitir su salida ----------
-function runStreamed(win, channel, command, args) {
+// ---------- Helper: correr un comando, transmitir su salida y dejarla en el log de disco ----------
+function runStreamed(win, channel, command, args, label) {
   return new Promise((resolve) => {
+    const cmdLine = `${command} ${args.join(' ')}`;
+    appendLogFile(`== INICIO${label ? ' · ' + label : ''} ==`);
+    appendLogFile(`$ ${cmdLine}`);
+
     const child = spawn(command, args, { shell: true, windowsHide: true });
 
     const send = (type, data) => {
@@ -153,22 +177,44 @@ function runStreamed(win, channel, command, args) {
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       send('log', text);
+      appendLogFile(text.trimEnd());
       const match = text.match(/(\d{1,3})\s?%/);
       if (match) send('progress', Number(match[1]));
     });
 
-    child.stderr.on('data', (chunk) => send('log', chunk.toString()));
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      send('log', text);
+      appendLogFile(`[stderr] ${text.trimEnd()}`);
+    });
 
     child.on('error', (err) => {
       send('log', `\n[ERROR] No se pudo ejecutar el comando: ${err.message}\n`);
-      resolve({ ok: false, code: -1 });
+      appendLogFile(`[ERROR] No se pudo ejecutar el comando: ${err.message}`);
+      resolve({ ok: false, code: -1, error: err.message });
     });
 
     child.on('close', (code) => {
       send('done', code);
+      appendLogFile(`== FIN${label ? ' · ' + label : ''} · código de salida: ${code} ==`);
       resolve({ ok: code === 0, code });
     });
   });
+}
+
+// ---------- Helper: reportar un error ANTES de llegar a correr un comando
+// (ej. "no se encontró versión en winget", "método desconocido") — antes
+// estos casos devolvían el error solo al valor de retorno de la promesa y
+// nunca aparecían ni en el log de pantalla ni en el de disco, así que un
+// fallo temprano se veía en la UI como "hubo un error" sin ninguna pista
+// de la causa en ningún lado. Ahora siempre queda una línea explicando qué
+// pasó, tanto en pantalla como en el archivo de log. ----------
+function failEarly(win, channel, label, message) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, { type: 'log', data: `\n[ERROR] ${label ? label + ': ' : ''}${message}\n` });
+  }
+  appendLogFile(`[ERROR]${label ? ' ' + label + ':' : ''} ${message}`);
+  return { ok: false, code: -1, error: message };
 }
 
 // ---------- Helper: parsear la salida tabular de winget ----------
@@ -225,7 +271,7 @@ ipcMain.handle('dep:install', async (event, method) => {
       "'https://community.chocolatey.org/install.ps1'))";
     return runStreamed(win, 'dep:stream', 'powershell', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCommand,
-    ]);
+    ], 'Instalar Chocolatey');
   }
   shell.openExternal('https://apps.microsoft.com/detail/9nblggh4nns1');
   return { ok: true, code: 0, opened: 'store' };
@@ -248,19 +294,19 @@ ipcMain.handle('program:install', async (event, { program, method, mode }) => {
       try {
         fs.mkdirSync(downloadDir, { recursive: true });
       } catch (err) {
-        return { ok: false, code: -1, error: `No se pudo crear la carpeta de descargas: ${err.message}` };
+        return failEarly(win, 'install:stream', program.name, `No se pudo crear la carpeta de descargas (${downloadDir}): ${err.message}`);
       }
       return runStreamed(win, 'install:stream', 'winget', [
         'download', '--id', program.winget, '-e',
         '--download-directory', downloadDir,
         '--accept-package-agreements', '--accept-source-agreements',
-      ]);
+      ], `${program.name} (winget download)`);
     }
 
     const args = ['install', '--id', program.winget, '-e'];
     if (installMode === 'auto') args.push('--silent');
     args.push('--accept-package-agreements', '--accept-source-agreements');
-    return runStreamed(win, 'install:stream', 'winget', args);
+    return runStreamed(win, 'install:stream', 'winget', args, `${program.name} (winget ${installMode})`);
   }
 
   if (method === 'choco') {
@@ -283,22 +329,16 @@ ipcMain.handle('program:install', async (event, { program, method, mode }) => {
       const reason = installMode === 'download'
         ? 'Chocolatey (edición gratuita) no soporta "solo descargar": no existe una forma de bajar el instalador sin instalarlo, y esa función no queda disponible en la edición Community.'
         : 'Chocolatey (edición gratuita) no soporta modo "manual": sus paquetes siempre se instalan desatendidos (silenciosos), no hay forma de mostrar el asistente del instalador real.';
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('install:stream', {
-          type: 'log',
-          data: `\n[CHOCO] ${reason}\n[CHOCO] Instalación cancelada — elegí "AUTOMÁTICO" o cambiá a método WINGET si el programa lo soporta.\n`,
-        });
-      }
-      return { ok: false, code: -1, error: reason };
+      return failEarly(win, 'install:stream', `${program.name} (choco)`, `${reason} Instalación cancelada — elegí "AUTOMÁTICO" o cambiá a método WINGET si el programa lo soporta.`);
     }
-    return runStreamed(win, 'install:stream', 'choco', ['install', program.choco, '-y']);
+    return runStreamed(win, 'install:stream', 'choco', ['install', program.choco, '-y'], `${program.name} (choco)`);
   }
 
   if (method === 'ninite') {
     shell.openExternal('https://ninite.com/');
     return { ok: true, code: 0, opened: 'ninite' };
   }
-  return { ok: false, code: -1, error: 'Método desconocido' };
+  return failEarly(win, 'install:stream', program.name, `Método desconocido: "${method}"`);
 });
 
 // ---------- Helper: comparar versiones tipo "3.12.4" / "8.0" numéricamente ----------
@@ -357,6 +397,39 @@ function resolveLatestWinget(prefix, searchTerm) {
   });
 }
 
+// Determina qué gestor usar para una herramienta dado el método pedido.
+// Mismo criterio que computeEffective en renderer.js para Programas —
+// no depende de que la UI ya lo haya filtrado, por si acaso.
+function computeToolEffective(tool, method) {
+  if (tool.special === 'chocolatey') return 'special';
+  if (method === 'choco') return tool.choco ? 'choco' : null;
+  if (method === 'winget') return (tool.winget || tool.resolvePrefix) ? 'winget' : null;
+  // auto: preferir winget (más rápido, no hace falta agregar choco antes),
+  // y caer a choco si la herramienta no tiene id de winget.
+  if (tool.winget || tool.resolvePrefix) return 'winget';
+  if (tool.choco) return 'choco';
+  return null;
+}
+
+// choco no tiene un comando directo de "solo consultar la última versión
+// disponible" tan cómodo como winget upgrade; "choco outdated -r" da una
+// línea por paquete con formato "nombre|actual|disponible|pinned" para lo
+// que ya está instalado, que es justo lo que necesitamos acá.
+function chocoOutdated(id) {
+  return new Promise((resolve) => {
+    const child = spawn('choco', ['outdated', '-r'], { shell: true, windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.on('error', () => resolve({ updateAvailable: false }));
+    child.on('close', () => {
+      const line = out.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(`${id.toLowerCase()}|`));
+      if (!line) return resolve({ updateAvailable: false });
+      const parts = line.split('|');
+      resolve({ updateAvailable: true, available: parts[2] || null });
+    });
+  });
+}
+
 // ---------- Útiles: estado / instalar / actualizar (keyed por tool.id) ----------
 async function detectTool(tool) {
   // 1) chequeo directo por CLI: el más confiable, encuentra instalaciones
@@ -390,7 +463,7 @@ async function detectTool(tool) {
   return { installed: false, version: null };
 }
 
-ipcMain.handle('tool:status', async (event, toolId) => {
+ipcMain.handle('tool:status', async (event, toolId, method) => {
   const tool = TOOLS.find((t) => t.id === toolId);
   if (!tool) return { installed: false, version: null };
 
@@ -407,6 +480,15 @@ ipcMain.handle('tool:status', async (event, toolId) => {
 
   const detected = await detectTool(tool);
   if (!detected.installed) return { installed: false, version: null, updateAvailable: false };
+
+  const effective = computeToolEffective(tool, method || 'auto');
+
+  // Si el método activo es CHOCO, chequear actualizaciones vía choco en vez
+  // de winget (evita golpear un winget roto solo para saber la versión).
+  if (effective === 'choco') {
+    const upd = await chocoOutdated(tool.choco);
+    return { ...detected, ...upd };
+  }
 
   // Si además tiene resolución dinámica, comparar contra la última disponible.
   if (tool.resolvePrefix) {
@@ -435,10 +517,10 @@ ipcMain.handle('tool:status', async (event, toolId) => {
   return { ...detected, updateAvailable: false };
 });
 
-ipcMain.handle('tool:install', async (event, toolId) => {
+ipcMain.handle('tool:install', async (event, toolId, method) => {
   const tool = TOOLS.find((t) => t.id === toolId);
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (!tool) return { ok: false, code: -1, error: 'Herramienta desconocida' };
+  if (!tool) return failEarly(win, 'tool:stream', toolId, 'Herramienta desconocida (no está en el catálogo TOOLS).');
 
   if (tool.special === 'chocolatey') {
     const psCommand =
@@ -449,44 +531,88 @@ ipcMain.handle('tool:install', async (event, toolId) => {
       "'https://community.chocolatey.org/install.ps1'))";
     return runStreamed(win, 'tool:stream', 'powershell', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCommand,
-    ]);
+    ], `${tool.name} (instalar)`);
+  }
+
+  const effective = computeToolEffective(tool, method || 'auto');
+
+  if (effective === 'choco') {
+    return runStreamed(win, 'tool:stream', 'choco', ['install', tool.choco, '-y'], `${tool.name} (instalar · choco ${tool.choco})`);
+  }
+
+  if (effective !== 'winget') {
+    return failEarly(win, 'tool:stream', tool.name, `No hay ningún método disponible para instalar esta herramienta con "${method || 'auto'}".`);
   }
 
   let wingetId = tool.winget;
   if (tool.resolvePrefix) {
     const latest = await resolveLatestWinget(tool.resolvePrefix, tool.searchTerm);
-    if (!latest) return { ok: false, code: -1, error: 'No se encontró ninguna versión disponible en winget' };
+    if (!latest) {
+      return failEarly(win, 'tool:stream', tool.name,
+        `No se encontró ninguna versión disponible en winget para "${tool.resolvePrefix}". ` +
+        'Puede ser que winget esté desactualizado, que la fuente "winget" no esté agregada ' +
+        '(revisá con "winget source list"), que no haya conexión a internet, o que winget ' +
+        'directamente no funcione en este sistema (algunas builds recortadas de Windows, como ' +
+        'AtlasOS, sacan App Installer) — probá cambiando el método a CHOCO.');
+    }
     wingetId = latest.id;
   }
 
   return runStreamed(win, 'tool:stream', 'winget', [
     'install', '--id', wingetId, '-e', '--silent',
     '--accept-package-agreements', '--accept-source-agreements',
-  ]);
+  ], `${tool.name} (instalar · winget ${wingetId})`);
 });
 
-ipcMain.handle('tool:update', async (event, toolId) => {
+ipcMain.handle('tool:update', async (event, toolId, method) => {
   const tool = TOOLS.find((t) => t.id === toolId);
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (!tool) return { ok: false, code: -1, error: 'Herramienta desconocida' };
+  if (!tool) return failEarly(win, 'tool:stream', toolId, 'Herramienta desconocida (no está en el catálogo TOOLS).');
 
   if (tool.special === 'chocolatey') {
-    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', 'chocolatey', '-y']);
+    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', 'chocolatey', '-y'], `${tool.name} (actualizar)`);
+  }
+
+  const effective = computeToolEffective(tool, method || 'auto');
+
+  if (effective === 'choco') {
+    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', tool.choco, '-y'], `${tool.name} (actualizar · choco ${tool.choco})`);
+  }
+
+  if (effective !== 'winget') {
+    return failEarly(win, 'tool:stream', tool.name, `No hay ningún método disponible para actualizar esta herramienta con "${method || 'auto'}".`);
   }
 
   if (tool.resolvePrefix) {
     // "Actualizar" para una herramienta de última-versión = resolver de
     // nuevo el id más reciente e instalarlo (winget lo deja al día).
     const latest = await resolveLatestWinget(tool.resolvePrefix, tool.searchTerm);
-    if (!latest) return { ok: false, code: -1, error: 'No se encontró ninguna versión disponible en winget' };
+    if (!latest) {
+      return failEarly(win, 'tool:stream', tool.name,
+        `No se encontró ninguna versión disponible en winget para "${tool.resolvePrefix}". ` +
+        'Puede ser que winget esté desactualizado, que la fuente "winget" no esté agregada ' +
+        '(revisá con "winget source list"), que no haya conexión a internet, o que winget ' +
+        'directamente no funcione en este sistema — probá cambiando el método a CHOCO.');
+    }
     return runStreamed(win, 'tool:stream', 'winget', [
       'install', '--id', latest.id, '-e', '--silent',
       '--accept-package-agreements', '--accept-source-agreements',
-    ]);
+    ], `${tool.name} (actualizar · winget ${latest.id})`);
   }
 
   return runStreamed(win, 'tool:stream', 'winget', [
     'upgrade', '--id', tool.winget, '-e', '--silent',
     '--accept-package-agreements', '--accept-source-agreements',
-  ]);
+  ], `${tool.name} (actualizar · winget ${tool.winget})`);
+});
+
+// ---------- Logs en disco (accesibles / persistentes entre sesiones) ----------
+ipcMain.handle('logs:open-folder', async () => {
+  try {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
+    const err = await shell.openPath(LOGS_DIR);
+    return { ok: !err, error: err || null, path: LOGS_DIR };
+  } catch (err) {
+    return { ok: false, error: err.message, path: LOGS_DIR };
+  }
 });

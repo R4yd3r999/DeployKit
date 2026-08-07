@@ -5,6 +5,7 @@
   let activeCategory = '__all';
   let activeMethod = 'auto';
   let activeMode = 'auto'; // 'download' | 'manual' | 'auto'
+  let activeToolMethod = 'auto'; // método para la página Útiles: 'auto' | 'winget' | 'choco'
   let searchTerm = '';
   const selected = new Map(); // id -> program
   let isBusy = false;
@@ -386,6 +387,18 @@
   installBtn.addEventListener('click', installQueue);
 
   // ================= PÁGINA: ÚTILES =================
+  // Mismo criterio que main.js → computeToolEffective (duplicado a propósito:
+  // el backend valida igual por las dudas, pero acá lo necesitamos para
+  // poder deshabilitar el botón en la UI antes de siquiera intentar).
+  function computeToolEffective(tool, method) {
+    if (tool.special === 'chocolatey') return 'special';
+    if (method === 'choco') return tool.choco ? 'choco' : null;
+    if (method === 'winget') return (tool.winget || tool.resolvePrefix) ? 'winget' : null;
+    if (tool.winget || tool.resolvePrefix) return 'winget';
+    if (tool.choco) return 'choco';
+    return null;
+  }
+
   function toolCardHTML(tool) {
     return `
       <div class="tool-card" data-id="${tool.id}">
@@ -418,13 +431,27 @@
     };
   }
 
+  // Deshabilita instalar/actualizar en las tarjetas cuyo método activo no
+  // soportan (ej. una herramienta sin id de choco si se fuerza CHOCO).
+  function updateToolCardsAvailability() {
+    TOOLS.forEach((tool) => {
+      const refs = getToolEls(tool.id);
+      if (!refs) return;
+      const effective = computeToolEffective(tool, activeToolMethod);
+      const unsupported = !effective;
+      refs.installBtn.disabled = unsupported;
+      refs.card.classList.toggle('unsupported', unsupported);
+      refs.card.title = unsupported ? `No disponible con método "${activeToolMethod.toUpperCase()}" para esta herramienta.` : '';
+    });
+  }
+
   async function refreshToolStatus(tool) {
     const refs = getToolEls(tool.id);
     if (!refs) return;
     refs.versionText.textContent = 'VERIFICANDO...';
     refs.updateFlag.textContent = '';
 
-    const status = await window.deploykit.toolStatus(tool.id);
+    const status = await window.deploykit.toolStatus(tool.id, activeToolMethod);
 
     if (status.installed) {
       refs.versionWrap.classList.add('installed');
@@ -438,10 +465,20 @@
       refs.installBtn.textContent = 'Instalar';
       refs.updateBtn.style.display = 'none';
     }
+    updateToolCardsAvailability();
   }
 
   window.deploykit.onToolStream(({ type, data }) => {
     if (type === 'log') pushLogChunk(data);
+  });
+
+  document.getElementById('tools-method-select').addEventListener('click', (e) => {
+    const btn = e.target.closest('.method-btn');
+    if (!btn || !btn.dataset.method) return;
+    activeToolMethod = btn.dataset.method;
+    [...document.querySelectorAll('#tools-method-select .method-btn')].forEach((b) => b.classList.toggle('active', b === btn));
+    updateToolCardsAvailability();
+    TOOLS.forEach(refreshToolStatus);
   });
 
   function renderToolsGrid() {
@@ -452,18 +489,25 @@
       if (!refs) return;
 
       refs.installBtn.addEventListener('click', async () => {
-        if (isBusy) return;
+        if (isBusy || refs.installBtn.disabled) return;
         isBusy = true;
         refs.installBtn.disabled = true;
         openTerminal();
-        logSys(`== Instalando ${tool.name} ==`);
+        logSys(`== Instalando ${tool.name} (${activeToolMethod}) ==`);
 
-        const result = await window.deploykit.toolInstall(tool.id);
+        const result = await window.deploykit.toolInstall(tool.id, activeToolMethod);
 
-        refs.installBtn.disabled = false;
         isBusy = false;
         await refreshToolStatus(tool);
-        logSys(result && result.ok !== false ? `${tool.name}: listo.` : `${tool.name}: hubo un error, revisá el log.`);
+        // Antes, si el fallo pasaba ANTES de correr el comando (ej. "no se
+        // encontró versión en winget"), result.error tenía el motivo pero
+        // nunca se mostraba — quedaba un genérico "hubo un error" sin
+        // ninguna pista. Ahora se imprime el motivo real cuando existe.
+        if (result && result.ok !== false) {
+          logSys(`${tool.name}: listo.`);
+        } else {
+          logSys(`${tool.name}: hubo un error${result && result.error ? ' — ' + result.error : ''}.`);
+        }
       });
 
       refs.updateBtn.addEventListener('click', async () => {
@@ -471,14 +515,18 @@
         isBusy = true;
         refs.updateBtn.disabled = true;
         openTerminal();
-        logSys(`== Actualizando ${tool.name} ==`);
+        logSys(`== Actualizando ${tool.name} (${activeToolMethod}) ==`);
 
-        const result = await window.deploykit.toolUpdate(tool.id);
+        const result = await window.deploykit.toolUpdate(tool.id, activeToolMethod);
 
         refs.updateBtn.disabled = false;
         isBusy = false;
         await refreshToolStatus(tool);
-        logSys(result && result.ok !== false ? `${tool.name}: actualizado.` : `${tool.name}: hubo un error, revisá el log.`);
+        if (result && result.ok !== false) {
+          logSys(`${tool.name}: actualizado.`);
+        } else {
+          logSys(`${tool.name}: hubo un error${result && result.error ? ' — ' + result.error : ''}.`);
+        }
       });
 
       refreshToolStatus(tool);
@@ -533,6 +581,12 @@
     document.querySelectorAll('.theme-card').forEach((c) => c.classList.toggle('active', c.dataset.theme === theme));
     window.deploykit.setTitlebarTheme(theme);
   }
+
+  document.getElementById('btn-open-logs').addEventListener('click', async () => {
+    const res = await window.deploykit.openLogsFolder();
+    if (res.ok) logSys(`Carpeta de logs abierta: ${res.path}`);
+    else logSys(`No se pudo abrir la carpeta de logs (${res.path}): ${res.error || 'error desconocido'}`);
+  });
 
   document.getElementById('btn-export-profile').addEventListener('click', async () => {
     const payload = { method: activeMethod, ids: [...selected.keys()] };

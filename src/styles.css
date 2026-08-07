@@ -422,6 +422,7 @@ body[data-theme="purple"] .card:hover, body[data-theme="purple"] .card.selected 
   border-radius: var(--radius);
   padding: 16px 18px;
 }
+.tool-card.unsupported { opacity: 0.45; }
 body[data-theme="purple"] .tool-card { border-left: 3px solid var(--line-strong); }
 body[data-theme="blue"] .tool-card { border-bottom: 2px solid var(--line-strong); }
 .tool-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; margin-bottom: 6px; }
