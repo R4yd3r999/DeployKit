@@ -10,6 +10,7 @@
   const selected = new Map(); // id -> program
   let isBusy = false;
   let currentInstallId = null;
+  let currentInstallLabel = '';
 
   // ================= Elementos =================
   const grid = document.getElementById('grid');
@@ -312,6 +313,7 @@
       if (refs) {
         refs.fill.classList.remove('indeterminate');
         refs.fill.style.width = `${data}%`;
+        refs.statusText.textContent = `${currentInstallLabel} · ${data}%`;
       }
     }
   });
@@ -320,7 +322,8 @@
   const MODE_DONE_LABELS = { download: 'DESCARGADO', manual: 'PROCESO FINALIZADO', auto: 'LISTO' };
 
   async function installOne(program, method, mode) {
-    setCardStatus(program.id, 'active', `${method.toUpperCase()} · ${MODE_LABELS[mode] || 'PROCESANDO'}`);
+    currentInstallLabel = `${method.toUpperCase()} · ${MODE_LABELS[mode] || 'PROCESANDO'}`;
+    setCardStatus(program.id, 'active', currentInstallLabel);
     logSys(`== ${mode === 'download' ? 'Descargando' : 'Instalando'} ${program.name} vía ${method.toUpperCase()} (${mode}) ==`);
     currentInstallId = program.id;
     let result;
@@ -387,9 +390,13 @@
   installBtn.addEventListener('click', installQueue);
 
   // ================= PÁGINA: ÚTILES =================
+  const toolSelected = new Map(); // id -> tool (mismo patrón que `selected` en Programas)
+  let currentToolInstallId = null;
+  let currentToolLabel = '';
+
   // Mismo criterio que main.js → computeToolEffective (duplicado a propósito:
   // el backend valida igual por las dudas, pero acá lo necesitamos para
-  // poder deshabilitar el botón en la UI antes de siquiera intentar).
+  // poder deshabilitar el botón/checkbox en la UI antes de siquiera intentar).
   function computeToolEffective(tool, method) {
     if (tool.special === 'chocolatey') return 'special';
     if (method === 'choco') return tool.choco ? 'choco' : null;
@@ -400,9 +407,15 @@
   }
 
   function toolCardHTML(tool) {
+    const effective = computeToolEffective(tool, activeToolMethod);
+    const supported = effective !== null;
+    const isSelected = toolSelected.has(tool.id);
     return `
-      <div class="tool-card" data-id="${tool.id}">
-        <div class="tool-name">${tool.name}</div>
+      <div class="tool-card ${isSelected ? 'selected' : ''} ${!supported ? 'unsupported' : ''}" data-id="${tool.id}">
+        <div class="card-top">
+          <div class="tool-name">${tool.name}</div>
+          <div class="checkbox" data-role="checkbox" title="Tildar para instalar en tanda junto a otras"></div>
+        </div>
         <div class="tool-desc">${tool.description}</div>
         <div class="tool-meta">
           <span class="tool-version" data-role="version">
@@ -414,6 +427,12 @@
           <button class="btn-accent small" data-role="install">Instalar</button>
           <button class="btn-ghost small" data-role="update" style="display:none;">Actualizar</button>
         </div>
+        <div class="status-chip" data-role="op-status" style="display:none;">
+          <span class="status-dot-sm"></span><span data-role="op-status-text"></span>
+        </div>
+        <div class="progress-track" data-role="progress-track">
+          <div class="progress-fill" data-role="progress-fill"></div>
+        </div>
       </div>
     `;
   }
@@ -423,16 +442,26 @@
     if (!card) return null;
     return {
       card,
+      checkbox: card.querySelector('[data-role="checkbox"]'),
       versionWrap: card.querySelector('[data-role="version"]'),
       versionText: card.querySelector('[data-role="version-text"]'),
       updateFlag: card.querySelector('[data-role="update-flag"]'),
       installBtn: card.querySelector('[data-role="install"]'),
       updateBtn: card.querySelector('[data-role="update"]'),
+      opStatus: card.querySelector('[data-role="op-status"]'),
+      opStatusText: card.querySelector('[data-role="op-status-text"]'),
+      track: card.querySelector('[data-role="progress-track"]'),
+      fill: card.querySelector('[data-role="progress-fill"]'),
     };
   }
 
-  // Deshabilita instalar/actualizar en las tarjetas cuyo método activo no
-  // soportan (ej. una herramienta sin id de choco si se fuerza CHOCO).
+  function updateToolsSelectedCount() {
+    document.getElementById('tools-selected-count').textContent = toolSelected.size;
+    document.getElementById('btn-install-selected-tools').disabled = toolSelected.size === 0 || isBusy;
+  }
+
+  // Deshabilita instalar/actualizar/selección en las tarjetas cuyo método
+  // activo no soportan (ej. una herramienta sin id de choco si se fuerza CHOCO).
   function updateToolCardsAvailability() {
     TOOLS.forEach((tool) => {
       const refs = getToolEls(tool.id);
@@ -442,7 +471,32 @@
       refs.installBtn.disabled = unsupported;
       refs.card.classList.toggle('unsupported', unsupported);
       refs.card.title = unsupported ? `No disponible con método "${activeToolMethod.toUpperCase()}" para esta herramienta.` : '';
+      if (unsupported && toolSelected.has(tool.id)) toolSelected.delete(tool.id);
+      refs.card.classList.toggle('selected', toolSelected.has(tool.id));
     });
+    updateToolsSelectedCount();
+  }
+
+  function setToolOpStatus(id, state, label) {
+    const refs = getToolEls(id);
+    if (!refs) return;
+    if (!state) {
+      refs.opStatus.style.display = 'none';
+      refs.track.classList.remove('show');
+      refs.fill.classList.remove('indeterminate');
+      refs.fill.style.width = '0%';
+      return;
+    }
+    refs.opStatus.style.display = 'flex';
+    refs.opStatus.className = `status-chip ${state}`;
+    refs.opStatusText.textContent = label;
+    if (state === 'active') {
+      refs.track.classList.add('show');
+      refs.fill.classList.add('indeterminate');
+    } else {
+      refs.fill.classList.remove('indeterminate');
+      if (state === 'done') refs.fill.style.width = '100%';
+    }
   }
 
   async function refreshToolStatus(tool) {
@@ -470,6 +524,14 @@
 
   window.deploykit.onToolStream(({ type, data }) => {
     if (type === 'log') pushLogChunk(data);
+    if (type === 'progress' && currentToolInstallId) {
+      const refs = getToolEls(currentToolInstallId);
+      if (refs) {
+        refs.fill.classList.remove('indeterminate');
+        refs.fill.style.width = `${data}%`;
+        refs.opStatusText.textContent = `${currentToolLabel} · ${data}%`;
+      }
+    }
   });
 
   document.getElementById('tools-method-select').addEventListener('click', (e) => {
@@ -481,6 +543,67 @@
     TOOLS.forEach(refreshToolStatus);
   });
 
+  // Un único punto de entrada para instalar/actualizar una herramienta —
+  // lo usan tanto el botón individual de la tarjeta como la cola de
+  // "Instalar seleccionadas", así el comportamiento (progreso, log,
+  // manejo de error) es exactamente el mismo por cualquiera de las dos vías.
+  async function runToolAction(tool, action) {
+    const verb = action === 'update' ? 'Actualizando' : 'Instalando';
+    currentToolLabel = `${activeToolMethod.toUpperCase()} · ${verb.toUpperCase()}`;
+    setToolOpStatus(tool.id, 'active', currentToolLabel);
+    openTerminal();
+    logSys(`== ${verb} ${tool.name} (${activeToolMethod}) ==`);
+    currentToolInstallId = tool.id;
+
+    let result;
+    try {
+      result = action === 'update'
+        ? await window.deploykit.toolUpdate(tool.id, activeToolMethod)
+        : await window.deploykit.toolInstall(tool.id, activeToolMethod);
+    } catch (err) {
+      result = { ok: false, code: -1, error: err && err.message };
+    }
+    currentToolInstallId = null;
+
+    await refreshToolStatus(tool);
+    if (result && result.ok !== false) {
+      setToolOpStatus(tool.id, 'done', action === 'update' ? 'ACTUALIZADO' : 'LISTO');
+      logSys(`${tool.name}: ${action === 'update' ? 'actualizado' : 'listo'}.`);
+    } else {
+      setToolOpStatus(tool.id, 'error', `ERROR${result && result.error ? ' · ' + result.error : ''}`);
+      // Antes, si el fallo pasaba ANTES de correr el comando (ej. "no se
+      // encontró versión en winget"), result.error tenía el motivo pero
+      // nunca se mostraba — quedaba un genérico "hubo un error" sin
+      // ninguna pista. Ahora se imprime el motivo real cuando existe.
+      logSys(`${tool.name}: hubo un error${result && result.error ? ' — ' + result.error : ''}.`);
+    }
+    // Deja la barra visible unos segundos y después la vuelve a ocultar,
+    // para no dejar 8 tarjetas con "LISTO"/barra llena permanentemente.
+    setTimeout(() => setToolOpStatus(tool.id, null), 4000);
+    return result;
+  }
+
+  async function toolQueue() {
+    if (isBusy) return;
+    isBusy = true;
+    const items = [...toolSelected.values()];
+    const btn = document.getElementById('btn-install-selected-tools');
+    btn.disabled = true;
+    btn.classList.add('busy');
+    openTerminal();
+
+    for (let i = 0; i < items.length; i++) {
+      await runToolAction(items[i], 'install');
+    }
+
+    btn.classList.remove('busy');
+    isBusy = false;
+    toolSelected.clear();
+    renderToolsGrid();
+  }
+
+  document.getElementById('btn-install-selected-tools').addEventListener('click', toolQueue);
+
   function renderToolsGrid() {
     toolsGrid.innerHTML = TOOLS.map(toolCardHTML).join('');
 
@@ -488,49 +611,42 @@
       const refs = getToolEls(tool.id);
       if (!refs) return;
 
-      refs.installBtn.addEventListener('click', async () => {
+      refs.card.addEventListener('click', (e) => {
+        if (e.target.closest('[data-role="install"]') || e.target.closest('[data-role="update"]')) return;
+        const effective = computeToolEffective(tool, activeToolMethod);
+        if (!effective) return;
+        if (toolSelected.has(tool.id)) toolSelected.delete(tool.id);
+        else toolSelected.set(tool.id, tool);
+        refs.card.classList.toggle('selected', toolSelected.has(tool.id));
+        updateToolsSelectedCount();
+      });
+
+      refs.installBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         if (isBusy || refs.installBtn.disabled) return;
         isBusy = true;
         refs.installBtn.disabled = true;
-        openTerminal();
-        logSys(`== Instalando ${tool.name} (${activeToolMethod}) ==`);
-
-        const result = await window.deploykit.toolInstall(tool.id, activeToolMethod);
-
-        isBusy = false;
-        await refreshToolStatus(tool);
-        // Antes, si el fallo pasaba ANTES de correr el comando (ej. "no se
-        // encontró versión en winget"), result.error tenía el motivo pero
-        // nunca se mostraba — quedaba un genérico "hubo un error" sin
-        // ninguna pista. Ahora se imprime el motivo real cuando existe.
-        if (result && result.ok !== false) {
-          logSys(`${tool.name}: listo.`);
-        } else {
-          logSys(`${tool.name}: hubo un error${result && result.error ? ' — ' + result.error : ''}.`);
-        }
-      });
-
-      refs.updateBtn.addEventListener('click', async () => {
-        if (isBusy) return;
-        isBusy = true;
         refs.updateBtn.disabled = true;
-        openTerminal();
-        logSys(`== Actualizando ${tool.name} (${activeToolMethod}) ==`);
-
-        const result = await window.deploykit.toolUpdate(tool.id, activeToolMethod);
-
+        await runToolAction(tool, 'install');
         refs.updateBtn.disabled = false;
         isBusy = false;
-        await refreshToolStatus(tool);
-        if (result && result.ok !== false) {
-          logSys(`${tool.name}: actualizado.`);
-        } else {
-          logSys(`${tool.name}: hubo un error${result && result.error ? ' — ' + result.error : ''}.`);
-        }
+      });
+
+      refs.updateBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (isBusy) return;
+        isBusy = true;
+        refs.installBtn.disabled = true;
+        refs.updateBtn.disabled = true;
+        await runToolAction(tool, 'update');
+        refs.updateBtn.disabled = false;
+        isBusy = false;
       });
 
       refreshToolStatus(tool);
     });
+
+    updateToolsSelectedCount();
   }
 
   // ================= Informativas =================

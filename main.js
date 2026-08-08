@@ -169,6 +169,7 @@ function runStreamed(win, channel, command, args, label) {
     appendLogFile(`$ ${cmdLine}`);
 
     const child = spawn(command, args, { shell: true, windowsHide: true });
+    let lastBucket = -1; // último escalón de 5% ya avisado por texto en el log
 
     const send = (type, data) => {
       if (win && !win.isDestroyed()) win.webContents.send(channel, { type, data });
@@ -179,7 +180,23 @@ function runStreamed(win, channel, command, args, label) {
       send('log', text);
       appendLogFile(text.trimEnd());
       const match = text.match(/(\d{1,3})\s?%/);
-      if (match) send('progress', Number(match[1]));
+      if (match) {
+        const pct = Math.min(100, Number(match[1]));
+        // La barra de progreso (evento 'progress') se actualiza siempre, en
+        // vivo, para que se vea fluida. Pero como texto en el log solo se
+        // imprime una línea nueva cada vez que se cruza un escalón de 5%
+        // (0, 5, 10...) — si avisáramos en CADA byte con "%" el log se
+        // volvería ilegible (winget/choco reescriben la misma línea muchas
+        // veces por segundo mientras descargan).
+        send('progress', pct);
+        const bucket = Math.floor(pct / 5) * 5;
+        if (bucket !== lastBucket) {
+          lastBucket = bucket;
+          const line = `→ ${bucket}%${label ? ' · ' + label : ''}`;
+          send('log', `\n${line}\n`);
+          appendLogFile(line);
+        }
+      }
     });
 
     child.stderr.on('data', (chunk) => {
@@ -300,13 +317,14 @@ ipcMain.handle('program:install', async (event, { program, method, mode }) => {
         'download', '--id', program.winget, '-e',
         '--download-directory', downloadDir,
         '--accept-package-agreements', '--accept-source-agreements',
-      ], `${program.name} (winget download)`);
+      ], `${program.name} · descargando (winget)`);
     }
 
     const args = ['install', '--id', program.winget, '-e'];
     if (installMode === 'auto') args.push('--silent');
     args.push('--accept-package-agreements', '--accept-source-agreements');
-    return runStreamed(win, 'install:stream', 'winget', args, `${program.name} (winget ${installMode})`);
+    const modeLabel = installMode === 'manual' ? 'instalando (manual)' : 'instalando';
+    return runStreamed(win, 'install:stream', 'winget', args, `${program.name} · ${modeLabel} (winget)`);
   }
 
   if (method === 'choco') {
@@ -331,7 +349,7 @@ ipcMain.handle('program:install', async (event, { program, method, mode }) => {
         : 'Chocolatey (edición gratuita) no soporta modo "manual": sus paquetes siempre se instalan desatendidos (silenciosos), no hay forma de mostrar el asistente del instalador real.';
       return failEarly(win, 'install:stream', `${program.name} (choco)`, `${reason} Instalación cancelada — elegí "AUTOMÁTICO" o cambiá a método WINGET si el programa lo soporta.`);
     }
-    return runStreamed(win, 'install:stream', 'choco', ['install', program.choco, '-y'], `${program.name} (choco)`);
+    return runStreamed(win, 'install:stream', 'choco', ['install', program.choco, '-y'], `${program.name} · instalando (choco)`);
   }
 
   if (method === 'ninite') {
@@ -531,13 +549,13 @@ ipcMain.handle('tool:install', async (event, toolId, method) => {
       "'https://community.chocolatey.org/install.ps1'))";
     return runStreamed(win, 'tool:stream', 'powershell', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCommand,
-    ], `${tool.name} (instalar)`);
+    ], `${tool.name} · instalando`);
   }
 
   const effective = computeToolEffective(tool, method || 'auto');
 
   if (effective === 'choco') {
-    return runStreamed(win, 'tool:stream', 'choco', ['install', tool.choco, '-y'], `${tool.name} (instalar · choco ${tool.choco})`);
+    return runStreamed(win, 'tool:stream', 'choco', ['install', tool.choco, '-y'], `${tool.name} · instalando (choco)`);
   }
 
   if (effective !== 'winget') {
@@ -561,7 +579,7 @@ ipcMain.handle('tool:install', async (event, toolId, method) => {
   return runStreamed(win, 'tool:stream', 'winget', [
     'install', '--id', wingetId, '-e', '--silent',
     '--accept-package-agreements', '--accept-source-agreements',
-  ], `${tool.name} (instalar · winget ${wingetId})`);
+  ], `${tool.name} · instalando (winget)`);
 });
 
 ipcMain.handle('tool:update', async (event, toolId, method) => {
@@ -570,13 +588,13 @@ ipcMain.handle('tool:update', async (event, toolId, method) => {
   if (!tool) return failEarly(win, 'tool:stream', toolId, 'Herramienta desconocida (no está en el catálogo TOOLS).');
 
   if (tool.special === 'chocolatey') {
-    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', 'chocolatey', '-y'], `${tool.name} (actualizar)`);
+    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', 'chocolatey', '-y'], `${tool.name} · actualizando`);
   }
 
   const effective = computeToolEffective(tool, method || 'auto');
 
   if (effective === 'choco') {
-    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', tool.choco, '-y'], `${tool.name} (actualizar · choco ${tool.choco})`);
+    return runStreamed(win, 'tool:stream', 'choco', ['upgrade', tool.choco, '-y'], `${tool.name} · actualizando (choco)`);
   }
 
   if (effective !== 'winget') {
@@ -597,13 +615,13 @@ ipcMain.handle('tool:update', async (event, toolId, method) => {
     return runStreamed(win, 'tool:stream', 'winget', [
       'install', '--id', latest.id, '-e', '--silent',
       '--accept-package-agreements', '--accept-source-agreements',
-    ], `${tool.name} (actualizar · winget ${latest.id})`);
+    ], `${tool.name} · actualizando (winget)`);
   }
 
   return runStreamed(win, 'tool:stream', 'winget', [
     'upgrade', '--id', tool.winget, '-e', '--silent',
     '--accept-package-agreements', '--accept-source-agreements',
-  ], `${tool.name} (actualizar · winget ${tool.winget})`);
+  ], `${tool.name} · actualizando (winget)`);
 });
 
 // ---------- Logs en disco (accesibles / persistentes entre sesiones) ----------

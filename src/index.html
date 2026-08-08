@@ -90,6 +90,10 @@
             <span class="mode-warning show" id="winget-broken-hint" title="Si winget tira &quot;el sistema no puede ejecutar el programa especificado&quot;, no est&aacute; realmente instalado en tu Windows (com&uacute;n en builds recortadas como AtlasOS) — cambi&aacute; a CHOCO.">
               &#9888; &iquest;winget falla siempre? Probá CHOCO
             </span>
+            <span style="flex:1"></span>
+            <button id="btn-install-selected-tools" class="btn-accent" disabled>
+              Instalar seleccionadas (<span id="tools-selected-count">0</span>)
+            </button>
           </div>
 
           <div id="tools-grid" class="tools-grid"></div>

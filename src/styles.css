@@ -421,8 +421,27 @@ body[data-theme="purple"] .card:hover, body[data-theme="purple"] .card.selected 
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 16px 18px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.tool-card.unsupported { opacity: 0.45; }
+.tool-card:hover { background: var(--bg-card-hover); }
+.tool-card.selected { border-color: var(--accent-dim); background: color-mix(in srgb, var(--accent) 6%, var(--bg-card)); }
+.tool-card.unsupported { opacity: 0.45; cursor: not-allowed; }
+.tool-card .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0; }
+.tool-card .checkbox { margin-top: 2px; }
+.tool-card.selected .checkbox { background: var(--accent); border-color: var(--accent); }
+.tool-card.selected .checkbox::after {
+  content: '';
+  position: absolute; left: 4px; top: 1px;
+  width: 4px; height: 8px;
+  border: solid var(--accent-on);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+/* Los botones Instalar/Actualizar quedan DENTRO de una tarjeta clickeable
+   (para seleccionar) — hay que evitar que el click les llegue como
+   selección de tarjeta y viceversa (ver stopPropagation en renderer.js). */
+.tool-card .tool-actions { position: relative; z-index: 1; }
 body[data-theme="purple"] .tool-card { border-left: 3px solid var(--line-strong); }
 body[data-theme="blue"] .tool-card { border-bottom: 2px solid var(--line-strong); }
 .tool-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; margin-bottom: 6px; }
