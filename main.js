@@ -371,6 +371,22 @@ function compareVersions(a, b) {
   return 0;
 }
 
+// ---------- Helper: ¿está instalado tal id vía choco? (independiente del PATH) ----------
+function chocoListInstalled(id) {
+  return new Promise((resolve) => {
+    const child = spawn('choco', ['list', '--local-only', id], { shell: true, windowsHide: true });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d.toString()));
+    child.on('error', () => resolve({ installed: false, version: null }));
+    child.on('close', () => {
+      const row = out.split(/\r?\n/).find((l) => l.toLowerCase().startsWith(`${id.toLowerCase()} `));
+      if (!row) return resolve({ installed: false, version: null });
+      const version = row.trim().split(/\s+/)[1] || null;
+      resolve({ installed: true, version, source: 'choco' });
+    });
+  });
+}
+
 // ---------- Helper: detectar una herramienta corriendo su propio comando (java -version, node --version, etc) ----------
 function cliDetect(cmd, args, regexSource, filter) {
   return new Promise((resolve) => {
@@ -449,14 +465,25 @@ function chocoOutdated(id) {
 }
 
 // ---------- Útiles: estado / instalar / actualizar (keyed por tool.id) ----------
-async function detectTool(tool) {
-  // 1) chequeo directo por CLI: el más confiable, encuentra instalaciones
-  //    que no vinieron de winget (instalador oficial, nvm, Store, etc).
-  if (tool.detectCmd) {
+async function detectTool(tool, effective) {
+  // 1) chequeo directo por CLI: el más confiable para herramientas de UNA
+  //    sola versión posible (node, python, dotnet) — encuentra
+  //    instalaciones que no vinieron de winget/choco (nvm, Store, etc).
+  //    Se salta con noCliDetect en herramientas donde puede convivir más
+  //    de una versión a la vez (ej. Java 8/11/17/21): ahí el PATH solo
+  //    refleja UNA de ellas (la que haya quedado primera), así que este
+  //    chequeo daría un resultado engañoso para las otras.
+  if (tool.detectCmd && !tool.noCliDetect) {
     const res = await cliDetect(tool.detectCmd, tool.detectArgs || [], tool.detectRegex, tool.detectFilter);
     if (res.installed) return { ...res, source: 'cli' };
   }
-  // 2) si no se resuelve por CLI, buscar en la lista de instalados de winget.
+
+  // 2) chequeo por el registro del gestor de paquetes correspondiente al
+  //    método activo — independiente de lo que haya en el PATH ahora mismo.
+  if (effective === 'choco' && tool.choco) {
+    return chocoListInstalled(tool.choco);
+  }
+
   const term = tool.resolvePrefix || tool.winget;
   if (term) {
     return new Promise((resolve) => {
@@ -496,10 +523,9 @@ ipcMain.handle('tool:status', async (event, toolId, method) => {
     return { ...res, updateAvailable: false };
   }
 
-  const detected = await detectTool(tool);
-  if (!detected.installed) return { installed: false, version: null, updateAvailable: false };
-
   const effective = computeToolEffective(tool, method || 'auto');
+  const detected = await detectTool(tool, effective);
+  if (!detected.installed) return { installed: false, version: null, updateAvailable: false };
 
   // Si el método activo es CHOCO, chequear actualizaciones vía choco en vez
   // de winget (evita golpear un winget roto solo para saber la versión).

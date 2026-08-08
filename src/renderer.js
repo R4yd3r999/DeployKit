@@ -680,6 +680,24 @@
 [FASE 5: APLICACIONES Y JUEGOS]
 11. Instalar clientes de juegos y multimedia (Steam, OBS, VLC, Discord).
 12. Aplicar optimizaciones finales de Atlas Toolbox a nivel visual o de red.
+====================================================================
+
+[NOTA: VARIAS VERSIONES DE JAVA A LA VEZ]
+Útiles ahora tiene Java 8 / 11 / 17 / 21 como tarjetas independientes —
+podés tener varias instaladas al mismo tiempo, no se pisan entre sí.
+Ojo con esto: si corrés "java -version" en una terminal, Windows solo va
+a mostrar UNA (la que haya quedado primera en el PATH — normalmente la
+última que instalaste), no significa que las demás no estén. Las
+tarjetas de esta app SÍ detectan cada versión por separado (consultan el
+registro de winget/choco, no el PATH), así que son la fuente confiable
+de qué tenés instalado.
+Para que un proyecto puntual use una versión específica sin depender del
+PATH global: configurá JAVA_HOME apuntando a esa carpeta, o llamá
+directo al java.exe de esa versión, ej:
+  "C:\\Program Files\\Eclipse Adoptium\\jdk-11.x.x-hotspot\\bin\\java.exe"
+Herramientas como Maven/Gradle wrappers y la mayoría de los IDEs (IntelliJ,
+Eclipse, VS Code) permiten fijar el JDK por proyecto sin tocar el PATH
+del sistema — es la forma recomendada de mezclar versiones.
 ====================================================================`;
 
   document.getElementById('roadmap-text').textContent = ROADMAP;

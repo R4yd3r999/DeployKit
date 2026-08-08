@@ -18,12 +18,41 @@ const TOOLS = [
     choco: 'vcredist-all',
   },
   {
+    id: 'jdk8',
+    name: 'Java 8 (LTS)',
+    description: 'Para apps/legacy que todavía piden Java 8 puntual. Convive en la misma máquina con otras versiones de Java sin pisarlas.',
+    winget: 'EclipseAdoptium.Temurin.8.JDK',
+    choco: 'temurin8',
+    // Se detecta por el registro del propio gestor de paquetes (winget/choco),
+    // NO corriendo "java -version" — con varias versiones de Java instaladas
+    // a la vez, "java -version" solo devuelve la que esté primera en el PATH
+    // (normalmente la última instalada), así que reportaría como "no
+    // instalado" un JDK que sí está, o mostraría la versión equivocada.
+    noCliDetect: true,
+  },
+  {
+    id: 'jdk11',
+    name: 'Java 11 (LTS)',
+    description: 'LTS intermedia, todavía muy pedida por frameworks Java corporativos. Convive con otras versiones sin pisarlas.',
+    winget: 'EclipseAdoptium.Temurin.11.JDK',
+    choco: 'temurin11',
+    noCliDetect: true,
+  },
+  {
+    id: 'jdk17',
+    name: 'Java 17 (LTS)',
+    description: 'LTS moderna, la que piden Spring Boot 3+ y la mayoría de proyectos Java actuales. Convive con otras versiones sin pisarlas.',
+    winget: 'EclipseAdoptium.Temurin.17.JDK',
+    choco: 'temurin17',
+    noCliDetect: true,
+  },
+  {
     id: 'jdk21',
-    name: 'Entorno Java',
-    description: 'JDK 21 LTS (Eclipse Temurin). Configura JAVA_HOME y el PATH automáticamente durante la instalación.',
+    name: 'Java 21 (LTS)',
+    description: 'Última LTS estable (Eclipse Temurin). Configura JAVA_HOME y el PATH automáticamente durante la instalación.',
     winget: 'EclipseAdoptium.Temurin.21.JDK',
     choco: 'temurin21',
-    detectCmd: 'java', detectArgs: ['-version'], detectRegex: '"(\\d+[\\d._]*)"',
+    noCliDetect: true,
   },
   {
     id: 'python',
